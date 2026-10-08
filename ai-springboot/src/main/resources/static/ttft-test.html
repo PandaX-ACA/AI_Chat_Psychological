@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>SSE TTFT测试页面</title>
+</head>
+<body>
+<input id="msg" placeholder="输入消息，如：你好">
+<button id="sendBtn">发送</button>
+
+<p>首字耗时 (TTFT) : <span id="ttft">-</span></p>
+<p>完整回答:</p>
+<div id="output" style="border:1px solid #aaa; width:600px; height:200px; white-space:pre-wrap;"></div>
+<p>日志：</p>
+<div id="log"></div>
+
+<script>
+    const btn = document.getElementById('sendBtn');
+    const outputDom = document.getElementById('output');
+    const logDom = document.getElementById('log');
+    const ttftDom = document.getElementById('ttft');
+
+    btn.onclick = async function() {
+        const userInput = document.getElementById('msg').value;
+        outputDom.innerText = '';
+        logDom.innerText = '';
+        ttftDom.innerText = '-';
+        const startTime = performance.now();
+
+        try {
+            const resp = await fetch('/psychological-chat/stream', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'token': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjYsInVzZXJuYW1lIjoiMjAwNTEyMTMiLCJyb2xlVHlwZSI6MSwiZXhwIjoxNzg5MzY5MjUyLCJpYXQiOjE3ODkyODI4NTIsImlzcyI6Im1lbnRhbC1oZWFsdGgtYXNzaXN0YW50In0.P4tui5SSc28rYBs1jkVgQiDeYsgg2oaDC1P5Yn96TKE'
+                },
+                body: JSON.stringify({
+                    sessionId: 'session_30',
+                    userMessage: userInput
+            })
+                ,
+                    userMessage: userInput
+                })
+
+            if (!resp.ok) {
+                throw new Error(`HTTP 状态码：${resp.status}`);
+            }
+
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let firstChunk = true;
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const blocks = buffer.split('\n\n');
+                buffer = blocks.pop();
+
+                for (const block of blocks) {
+                    if (!block.trim()) continue;
+                    let eventType = "message";
+                    let dataStr = "";
+                    const lines = block.split('\n');
+                    for (const line of lines) {
+                        if (line.startsWith('event:')) {
+                            eventType = line.replace('event:', '').trim();
+                        } else if (line.startsWith('data:')) {
+                            dataStr = line.replace('data:', '').trim();
+                        }
+                    }
+                    if (!dataStr) continue;
+
+                    if (eventType === 'message') {
+                        const json = JSON.parse(dataStr);
+                        if (firstChunk) {
+                            const ttft = performance.now() - startTime;
+                            ttftDom.innerText = `${ttft.toFixed(2)} ms`;
+                            firstChunk = false;
+                        }
+                        if (json.data?.content) {
+                            outputDom.innerText += json.data.content;
+                        }
+                    } else if (eventType === 'done') {
+                        logDom.innerText += "\n✅ 流式输出结束";
+                    } else if (eventType === 'error') {
+                        const json = JSON.parse(dataStr);
+                        logDom.innerText += `\n❌ 后端错误: ${json.msg}`;
+                    }
+                }
+            }
+        } catch (err) {
+            console.error(err);
+            logDom.innerText = "请求异常：" + err.message;
+        }
+    }
+</script>
+</body>
+</html>
